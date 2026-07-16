@@ -1,0 +1,80 @@
+services:
+  db:
+    image: mariadb:10.11
+    container_name: koha-db
+    restart: unless-stopped
+    environment:
+      MYSQL_ROOT_PASSWORD: rootpassword
+    volumes:
+      - koha-db-data:/var/lib/mysql
+    healthcheck:
+      test: ["CMD", "mariadb-admin", "ping", "-h", "localhost", "-prootpassword"]
+      interval: 10s
+      timeout: 5s
+      retries: 30
+    networks:
+      - koha-net
+
+  memcached:
+    image: memcached:latest
+    container_name: koha-memcached
+    restart: unless-stopped
+    networks:
+      - koha-net
+
+  elasticsearch:
+    image: koha/opensearch-icu:2
+    container_name: koha-elasticsearch
+    restart: unless-stopped
+    environment:
+      discovery.type: single-node
+      plugins.security.disabled: "true"
+      OPENSEARCH_INITIAL_ADMIN_PASSWORD: "StrongPassword123!"
+      OPENSEARCH_JAVA_OPTS: "-Xms512m -Xmx512m"
+    networks:
+      - koha-net
+
+  koha:
+    build: .
+    image: koha-custom
+    container_name: koha
+    restart: unless-stopped
+    user: root
+    privileged: true
+    depends_on:
+      db:
+        condition: service_healthy
+    environment:
+      KOHA_INSTANCE: library
+      MYSQL_SERVER: db
+      MYSQL_ROOT_USER: root
+      MYSQL_ROOT_PASSWORD: rootpassword
+      MYSQL_PASSWORD: strongpassword
+      OVERRIDE_SYSPREF_SearchEngine: Zebra
+      USE_BACKEND: "true"
+      USE_MEMCACHED: "true"
+      MEMCACHED_SERVERS: memcached:11211
+      USE_APACHE2: "true"
+      USE_CRON: "true"
+      KOHA_INTRANET_PORT: 8081
+      KOHA_OPAC_PORT: 8080
+      KOHA_LANGS: "en"
+    ports:
+      - "8080:8080"
+      - "8081:8081"
+    volumes:
+      - koha-shared-data:/var/lib/koha
+      - koha-config-data:/etc/koha/sites
+      - koha-log-data:/var/log/koha
+    networks:
+      - koha-net
+
+networks:
+  koha-net:
+    driver: bridge
+
+volumes:
+  koha-db-data:
+  koha-shared-data:
+  koha-config-data:
+  koha-log-data:

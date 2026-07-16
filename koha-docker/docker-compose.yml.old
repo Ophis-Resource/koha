@@ -1,0 +1,127 @@
+---
+version: '3'
+services:
+    db:
+        image: mariadb:10.3
+        restart: always
+        env_file:
+            - .env
+        volumes:
+            - ${DB_VOLUME:-db-data}:/var/lib/mysql:delegated
+        networks:
+            - kohanet
+        healthcheck:
+            test: ["CMD-SHELL", "mysql --user=${MYSQL_USER} --password=${MYSQL_PASSWORD} --host=${MYSQL_SERVER} koha_${KOHA_INSTANCE} -e 'select 1'"]
+            interval: 10s
+            start_period: "2m"
+            start_interval: "2s"
+    es:
+        image: koha/elasticsearch-icu
+        environment:
+            - cluster.name=docker-cluster
+            - bootstrap.memory_lock=true
+            - xpack.security.enabled=false
+            - "ES_JAVA_OPTS=-Xms512m -Xmx512m"
+        ulimits:
+            memlock:
+                soft: -1
+                hard: -1
+        networks:
+            - kohanet
+        healthcheck:
+            test: ["CMD", "curl", "-f", "127.0.0.1:9200"]
+            interval: 10s
+            start_period: "2m"
+            start_interval: "2s"
+    apache2:
+        image: registry.gitlab.com/koha-community/docker/koha-docker/koha:${KOHA_VERSION:-stable}
+        restart: always
+        env_file:
+            - .env
+        depends_on:
+            koha:
+                condition: service_healthy
+        cap_add:
+            - ALL
+        environment:
+            USE_APACHE2: 1
+            USE_BACKEND: 0
+            USE_SIP: 0
+            USE_CRON: 0
+            USE_Z3950: 0
+        networks:
+            kohanet:
+                aliases:
+                    - "${KOHA_INTRANET_PREFIX}${KOHA_INSTANCE}${KOHA_INTRANET_SUFFIX}${KOHA_DOMAIN}"
+                    - "${KOHA_OPAC_PREFIX}${KOHA_INSTANCE}${KOHA_OPAC_SUFFIX}${KOHA_DOMAIN}"
+        ports:
+            - "8080:8080"
+            - "8081:8081"
+    cron:
+        image: registry.gitlab.com/koha-community/docker/koha-docker/koha:${KOHA_VERSION:-stable}
+        restart: always
+        env_file:
+            - .env
+        depends_on:
+            koha:
+                condition: service_healthy
+        environment:
+            USE_APACHE2: 0
+            USE_BACKEND: 0
+            USE_SIP: 0
+            USE_CRON: 1
+            USE_Z3950: 0
+        networks:
+            kohanet:
+    koha:
+        image: registry.gitlab.com/koha-community/docker/koha-docker/koha:${KOHA_VERSION:-stable}
+        depends_on:
+            db:
+                condition: service_started
+            memcached:
+                condition: service_healthy
+            es:
+                condition: service_healthy
+        cap_add:
+            - ALL
+        tmpfs:
+            - /cover_db
+            - /tmp
+        env_file:
+            - .env
+        environment:
+            USE_APACHE2: 0
+            USE_BACKEND: 1
+            USE_SIP: 0
+            USE_CRON: 0
+            USE_Z3950: 0
+        volumes:
+            - ${INSTANCE_VOLUME:-inst-data}:/var/lib/koha:delegated
+            - ${ETC_VOLIME:-etc-data}:/etc/koha/sites:delegated
+        ulimits:
+            nofile:
+                soft: 65536
+                hard: 65536
+        networks:
+            kohanet:
+        healthcheck:
+            test: ["CMD", "test", "-f", "/healthy"]
+            interval: 10s
+            start_period: "2m"
+            start_interval: "5s"
+    memcached:
+        image: memcached
+        command: memcached -m 64m
+        networks:
+            - kohanet
+        healthcheck:
+            test: ["CMD-SHELL", "/bin/bash -c 'exec 3<>/dev/tcp/localhost/11211; printf \"stats\nquit\n\" >&3'"]
+            interval: 10s
+            start_period: "2m"
+            start_interval: "5s"
+volumes:
+    db-data:
+    inst-data:
+    etc-data:
+networks:
+    kohanet:
